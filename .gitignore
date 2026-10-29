@@ -1,0 +1,9 @@
+*.p12
+*.jks
+*.pem
+*token*
+.env*
+repository.json
+upstream/
+run/
+__pycache__/

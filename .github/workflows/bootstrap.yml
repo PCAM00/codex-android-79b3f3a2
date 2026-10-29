@@ -1,0 +1,80 @@
+{
+  "name": "Build Codex isolated aarch64 bootstrap",
+  "on": {
+    "workflow_dispatch": {}
+  },
+  "permissions": {
+    "contents": "read"
+  },
+  "concurrency": {
+    "group": "codex-native-aarch64",
+    "cancel-in-progress": false
+  },
+  "jobs": {
+    "native": {
+      "runs-on": "ubuntu-24.04",
+      "timeout-minutes": 180,
+      "steps": [
+        {
+          "name": "Checkout private build recipes",
+          "uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+          "with": {
+            "persist-credentials": false
+          }
+        },
+        {
+          "name": "Prepare only this ephemeral Linux runner",
+          "shell": "bash",
+          "run": "set -euo pipefail\nmkdir -p dist\n# This job uses the toolchain inside Docker, not the host Android SDK.\n# The APK job will have a separate fresh runner.\nif [ \"${GITHUB_ACTIONS:-}\" = \"true\" ] && [ \"${RUNNER_ENVIRONMENT:-}\" = \"github-hosted\" ]; then\n  for dir in /usr/local/lib/android /usr/share/dotnet /opt/ghc; do\n    if [ -d \"$dir\" ] && [ ! -L \"$dir\" ]; then\n      resolved=\"$(realpath \"$dir\")\"\n      test \"$resolved\" = \"$dir\"\n      echo \"Removing unused preinstalled tools only on this ephemeral runner: $resolved\"\n      sudo rm -rf -- \"$resolved\"\n    fi\n  done\nfi\ndf -h .\n"
+        },
+        {
+          "name": "Fetch exact official package revision",
+          "shell": "bash",
+          "run": "set -euo pipefail\npython3 - <<'PY'\nimport json,subprocess\ns=json.load(open('source-lock.json'))['packages']\nsubprocess.run(['git','init','termux-packages'],check=True)\nsubprocess.run(['git','-C','termux-packages','remote','add','origin',s['repository']+'.git'],check=True)\nsubprocess.run(['git','-C','termux-packages','fetch','--depth','1','origin',s['commit']],check=True)\nsubprocess.run(['git','-C','termux-packages','checkout','--detach','FETCH_HEAD'],check=True)\nactual=subprocess.check_output(['git','-C','termux-packages','rev-parse','HEAD'],text=True).strip()\nassert actual==s['commit']\nPY\npython3 scripts/patch_packages.py termux-packages\nbash -n termux-packages/scripts/build-bootstraps.sh\n"
+        },
+        {
+          "name": "Source-build matching native packages and bootstrap",
+          "shell": "bash",
+          "run": "set -euo pipefail\ndocker pull ghcr.io/termux/package-builder:latest\ndocker image inspect ghcr.io/termux/package-builder:latest --format '{{json .RepoDigests}}' > dist/builder-image.json\n# Only the source directory is mounted. No PAT, signing key or user phone data is passed.\ndocker run --rm --init   --cap-add SYS_ADMIN --device /dev/fuse   --security-opt \"seccomp=$PWD/termux-packages/scripts/profile.json\"   --security-opt apparmor=unconfined   --volume \"$PWD/termux-packages:/home/builder/termux-packages\"   --workdir /home/builder/termux-packages   --env CI=true --env TERMUX_PACKAGE_MANAGER=apt   --env TERMUX_PKG_API_LEVEL=24 --env TERMUX_MAKE_PROCESSES=2   ghcr.io/termux/package-builder:latest   bash ./scripts/build-bootstraps.sh --architectures aarch64 --add proot,curl   2>&1 | tee build-native.log\n"
+        },
+        {
+          "name": "Finalize repository isolation and audit bootstrap",
+          "shell": "bash",
+          "run": "set -euo pipefail\npython3 scripts/finalize_bootstrap.py termux-packages/bootstrap-aarch64.zip dist/bootstrap-aarch64.zip\npython3 scripts/audit_bootstrap.py dist/bootstrap-aarch64.zip --report dist/bootstrap-report.json\ncp source-lock.json dist/source-lock.json\n"
+        },
+        {
+          "name": "Upload validated bootstrap",
+          "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+          "with": {
+            "name": "codex-native-bootstrap-aarch64",
+            "path": "dist/",
+            "if-no-files-found": "error",
+            "retention-days": 14
+          }
+        },
+        {
+          "name": "Keep matching native debs",
+          "if": "always()",
+          "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+          "with": {
+            "name": "codex-native-debs-aarch64",
+            "path": "termux-packages/output/*.deb",
+            "if-no-files-found": "warn",
+            "retention-days": 7
+          }
+        },
+        {
+          "name": "Upload build diagnostics",
+          "if": "always()",
+          "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+          "with": {
+            "name": "codex-native-build-log",
+            "path": "build-native.log\nsource-lock.json",
+            "if-no-files-found": "warn",
+            "retention-days": 7
+          }
+        }
+      ]
+    }
+  }
+}

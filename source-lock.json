@@ -1,0 +1,22 @@
+{
+  "app": {
+    "repository": "https://github.com/termux/termux-app",
+    "ref": "v0.118.3",
+    "commit": "5b657c6adf4304e5198951ce815fe0205dcac29c"
+  },
+  "packages": {
+    "repository": "https://github.com/termux/termux-packages",
+    "ref": "master",
+    "commit": "7e1a5db289ad89f97bb295a515ea3096b87eb1cd"
+  },
+  "identity": {
+    "applicationId": "io.cdxbox",
+    "name": "Codex",
+    "nativePrefix": "/data/data/io.cdxbox/files/usr",
+    "nativeHome": "/data/data/io.cdxbox/files/home"
+  },
+  "neverModifyPackages": [
+    "com.termux",
+    "com.dsharnessmobile.shell"
+  ]
+}
