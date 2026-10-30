@@ -21,6 +21,10 @@ tools_new='''termux_step_pre_configure() {
 \texport TERMUX_ANDROID_HOME="${TERMUX__HOME:-${TERMUX__ROOTFS}/home}"
 \texport TERMUX_PACKAGE_FORMAT="${TERMUX_PACKAGE_FORMAT:-debian}"
 \texport TERMUX_PACKAGE_MANAGER="${TERMUX_PACKAGE_MANAGER:-apt}"
+\t# The shipped example config documents a commented default path using the upstream package name.
+\tif [ -f "$TERMUX_PKG_SRCDIR/termux.properties" ]; then
+\t\tsed -i "s|/data/data/com.termux/files|${TERMUX__ROOTFS}|g" "$TERMUX_PKG_SRCDIR/termux.properties"
+\tfi
 \tautoreconf -vfi
 }
 '''
