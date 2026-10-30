@@ -16,7 +16,7 @@
       "timeout-minutes": 180,
       "steps": [
         {
-          "name": "Checkout private build recipes",
+          "name": "Checkout audited public build recipes",
           "uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
           "with": {
             "persist-credentials": false
@@ -30,12 +30,23 @@
         {
           "name": "Fetch exact official package revision",
           "shell": "bash",
-          "run": "set -euo pipefail\npython3 - <<'PY'\nimport json,subprocess\ns=json.load(open('source-lock.json'))['packages']\nsubprocess.run(['git','init','termux-packages'],check=True)\nsubprocess.run(['git','-C','termux-packages','remote','add','origin',s['repository']+'.git'],check=True)\nsubprocess.run(['git','-C','termux-packages','fetch','--depth','1','origin',s['commit']],check=True)\nsubprocess.run(['git','-C','termux-packages','checkout','--detach','FETCH_HEAD'],check=True)\nactual=subprocess.check_output(['git','-C','termux-packages','rev-parse','HEAD'],text=True).strip()\nassert actual==s['commit']\nPY\npython3 scripts/patch_packages.py termux-packages\nbash -n termux-packages/scripts/build-bootstraps.sh\n"
+          "run": "set -euo pipefail\npython3 - <<'PY'\nimport json,subprocess\ns=json.load(open('source-lock.json'))['packages']\nsubprocess.run(['git','init','termux-packages'],check=True)\nsubprocess.run(['git','-C','termux-packages','remote','add','origin',s['repository']+'.git'],check=True)\nsubprocess.run(['git','-C','termux-packages','fetch','--depth','1','origin',s['commit']],check=True)\nsubprocess.run(['git','-C','termux-packages','checkout','--detach','FETCH_HEAD'],check=True)\nactual=subprocess.check_output(['git','-C','termux-packages','rev-parse','HEAD'],text=True).strip()\nassert actual==s['commit']\nPY\npython3 scripts/patch_packages.py termux-packages\nbash -n termux-packages/scripts/build-bootstraps.sh\n\npython3 scripts/bootstrap_recipes.py termux-packages --from-script termux-packages/scripts/build-bootstraps.sh --extra proot,curl\n"
+        },
+        {
+          "name": "Restore matching completed native build state",
+          "id": "native_cache",
+          "uses": "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830",
+          "with": {
+            "path": "native-cache/data\ntermux-packages/output",
+            "key": "codex-native-v2-${{ runner.os }}-${{ hashFiles('source-lock.json') }}-${{ github.run_id }}",
+            "restore-keys": "codex-native-v2-${{ runner.os }}-${{ hashFiles('source-lock.json') }}-"
+          }
         },
         {
           "name": "Source-build matching native packages and bootstrap",
           "shell": "bash",
-          "run": "set -euo pipefail\ndocker pull ghcr.io/termux/package-builder:latest\ndocker image inspect ghcr.io/termux/package-builder:latest --format '{{json .RepoDigests}}' > dist/builder-image.json\n# Only the source directory is mounted. No PAT, signing key or user phone data is passed.\ndocker run --rm --init   --cap-add SYS_ADMIN --device /dev/fuse   --security-opt \"seccomp=$PWD/termux-packages/scripts/profile.json\"   --security-opt apparmor=unconfined   --volume \"$PWD/termux-packages:/home/builder/termux-packages\"   --workdir /home/builder/termux-packages   --env CI=true --env TERMUX_PACKAGE_MANAGER=apt   --env TERMUX_PKG_API_LEVEL=24 --env TERMUX_MAKE_PROCESSES=2   ghcr.io/termux/package-builder:latest   bash ./scripts/build-bootstraps.sh --architectures aarch64 --add proot,curl   2>&1 | tee build-native.log\n"
+          "run": "set -euo pipefail\nmkdir -p native-cache/data/data\ndocker pull ghcr.io/termux/package-builder:latest\ndocker image inspect ghcr.io/termux/package-builder:latest --format '{{json .RepoDigests}}' > dist/builder-image.json\n# Only the source directory is mounted. No PAT, signing key or user phone data is passed.\ndocker run --rm --init   --cap-add SYS_ADMIN --device /dev/fuse   --security-opt \"seccomp=$PWD/termux-packages/scripts/profile.json\"   --security-opt apparmor=unconfined   --volume \"$PWD/termux-packages:/home/builder/termux-packages\" --volume \"$PWD/native-cache/data:/data\"   --workdir /home/builder/termux-packages   --env CI=true --env TERMUX_PACKAGE_MANAGER=apt   --env TERMUX_PKG_API_LEVEL=24 --env TERMUX_MAKE_PROCESSES=4   ghcr.io/termux/package-builder:latest   bash ./scripts/build-bootstraps.sh --architectures aarch64 --add proot,curl   2>&1 | tee build-native.log\n",
+          "id": "compile"
         },
         {
           "name": "Finalize repository isolation and audit bootstrap",
@@ -53,14 +64,37 @@
           }
         },
         {
-          "name": "Keep matching native debs",
+          "name": "Archive native outputs without invalid artifact filenames",
+          "if": "always()",
+          "shell": "bash",
+          "run": "set -euo pipefail\nmkdir -p native-intermediate\npython3 scripts/archive_native_outputs.py termux-packages/output native-intermediate/native-debs.tar\ncp source-lock.json native-intermediate/source-lock.json\nfor file in codex-compile-complete.txt bootstrap-recipe-map.json runtime-package-selection.json; do\n  if [ -f \"termux-packages/$file\" ]; then cp \"termux-packages/$file\" \"native-intermediate/$file\"; fi\ndone\n"
+        },
+        {
+          "name": "Keep matching native debs and compilation checkpoint",
           "if": "always()",
           "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
           "with": {
             "name": "codex-native-debs-aarch64",
-            "path": "termux-packages/output/*.deb",
-            "if-no-files-found": "warn",
-            "retention-days": 7
+            "path": "native-intermediate/",
+            "if-no-files-found": "error",
+            "compression-level": 0,
+            "retention-days": 1
+          }
+        },
+        {
+          "name": "Check safe completed-cache size",
+          "id": "cache_check",
+          "if": "always()",
+          "shell": "bash",
+          "run": "python3 - <<'PY'\nfrom pathlib import Path\nimport json,os,subprocess\nexpected=json.load(open('source-lock.json'))\nmarker=Path('termux-packages/codex-compile-complete.txt')\ncomplete=marker.exists() and marker.read_text().splitlines()==['aarch64',expected['identity']['nativePrefix'],expected['packages']['commit']]\nsize=0\nfor p in ['native-cache/data','termux-packages/output']:\n if Path(p).exists():size+=int(subprocess.check_output(['du','-sb',p],text=True).split()[0])\nsave=complete and size<=3*1024**3\nwith open(os.environ['GITHUB_OUTPUT'],'a') as out:out.write('save='+str(save).lower()+'\\n')\nprint('Completed native state:',complete,'cache bytes:',size,'save:',save)\nPY\n"
+        },
+        {
+          "name": "Save only fully compiled matching native state",
+          "if": "always() && steps.cache_check.outputs.save == 'true'",
+          "uses": "actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830",
+          "with": {
+            "path": "native-cache/data\ntermux-packages/output",
+            "key": "codex-native-v2-${{ runner.os }}-${{ hashFiles('source-lock.json') }}-${{ github.run_id }}"
           }
         },
         {
