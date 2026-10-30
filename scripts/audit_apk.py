@@ -46,12 +46,24 @@ with zipfile.ZipFile(a.apk) as apk:
    if name.endswith('/libtermux-bootstrap.so'):bootstrap_match=bootstrap in data
   if name.startswith('res/xml') and name.endswith('/shortcuts.xml'):shortcut_names.append(name)
   if name.endswith(('.jks','.p12')):failures.append('Unexpected signing-key container inside APK')
+# Release builds may shorten resource paths (optimizeReleaseResources), so identify the
+# shortcuts resource by its compiled root element instead of by file name.
 if not shortcut_names:
  listing=subprocess.check_output([a.aapt,'list',str(a.apk)],text=True)
- entries=[line.strip() for line in listing.splitlines() if line.strip()]
- shortcut_names=[e for e in entries if e.endswith('shortcuts.xml')]
+ candidates=[line.strip() for line in listing.splitlines() if line.strip().endswith('.xml') and line.strip()!='AndroidManifest.xml']
+ inspected=0
+ for candidate in candidates:
+  if inspected>=400:break
+  inspected+=1
+  try:
+   tree=subprocess.run([a.aapt,'dump','xmltree',str(a.apk),candidate],capture_output=True,text=True,timeout=60)
+  except subprocess.TimeoutExpired:
+   continue
+  if tree.returncode!=0:continue
+  roots=[l for l in tree.stdout.splitlines() if l.strip().startswith('E: ')][:1]
+  if roots and roots[0].strip().split()[1]=='shortcuts':shortcut_names.append(candidate)
  if not shortcut_names:
-  failures.append('No compiled shortcuts XML entry; xml resources present: '+','.join([e for e in entries if e.endswith('.xml') and ('/xml' in e or 'xml/' in e)][:10]))
+  failures.append(f'No compiled shortcuts resource found among {len(candidates)} xml entries')
 if abis!={'arm64-v8a'}:failures.append('APK includes missing/unexpected native ABI: '+str(sorted(abis)))
 if not bootstrap_match:failures.append('JNI bootstrap payload is not byte-identical to the audited ZIP')
 missing=sorted(required_classes-classes)
