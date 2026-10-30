@@ -12,6 +12,7 @@ with tempfile.TemporaryDirectory(prefix='codex-recipe-test-',dir=workspace) as t
   z.writestr('SYMLINKS.txt','bash←./bin/sh\n')
   z.writestr('bin/termux-wake-lock','#!/data/data/io.cdxbox/files/usr/bin/sh\nam startservice io.cdxbox/io.cdxbox.app.TermuxService\n')
   z.writestr('etc/apt/sources.list','deb https://example.invalid/official-old-prefix stable main\n')
+  z.writestr('etc/termux/termux-bootstrap/second-stage/termux-bootstrap-second-stage.sh','#!/data/data/io.cdxbox/files/usr/bin/bash\n# synthetic fixture, never executed\n')
  for src,dest,extra in [(raw,out,[]),(out,again,['--require-source-metadata'])]:
   subprocess.run(['python3',str(repo/'scripts/finalize_bootstrap.py'),str(src),str(dest),'--lock',str(repo/'source-lock.json'),*extra],check=True,stdout=subprocess.DEVNULL)
  with zipfile.ZipFile(again) as z:
@@ -21,7 +22,10 @@ with tempfile.TemporaryDirectory(prefix='codex-recipe-test-',dir=workspace) as t
   assert b'Dir::Etc::sourcelist "/dev/null";' in z.read('etc/apt/apt.conf.d/99-codex-source-isolation')
  print('PASS synthetic ZIP finalization: component targets, repository isolation, idempotence')
  mismatch=temp/'fixture-wrong-source.zip'
- with zipfile.ZipFile(mismatch,'w') as z:z.writestr('etc/codex-build.json',json.dumps({'applicationId':'com.termux'}))
+ with zipfile.ZipFile(mismatch,'w') as z:
+  z.writestr('SYMLINKS.txt','bash←bin/sh\n')
+  z.writestr('bin/bash','synthetic fixture')
+  z.writestr('etc/codex-build.json',json.dumps({'applicationId':'com.termux'}))
  r=subprocess.run(['python3',str(repo/'scripts/finalize_bootstrap.py'),str(mismatch),str(temp/'rejected.zip'),'--lock',str(repo/'source-lock.json'),'--require-source-metadata'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
  assert r.returncode!=0
  print('PASS incompatible bootstrap source metadata is rejected')
@@ -46,7 +50,11 @@ with tempfile.TemporaryDirectory(prefix='codex-recipe-test-',dir=workspace) as t
  assert all(i.attrib[ns+'targetPackage']=='io.cdxbox' for i in shortcuts.iter('intent'))
  assert all(i.attrib[ns+'targetClass'].startswith('com.termux.') for i in shortcuts.iter('intent'))
  assert (source/'app/src/main/cpp/bootstrap-aarch64.zip').read_bytes()==again.read_bytes()
- print('PASS source transformation: independent install ID, unchanged Java/JNI namespace, strict bootstrap hash')
+ installer=(source/'app/src/main/java/com/termux/app/TermuxInstaller.java').read_text()
+ stage='etc/termux/termux-bootstrap/second-stage/termux-bootstrap-second-stage.sh'
+ assert f'zipEntryName.equals("{stage}")' in installer
+ assert f'TERMUX_PREFIX_DIR_PATH + "/{stage}"' in installer
+ print('PASS source transformation: independent install ID, unchanged Java/JNI namespace, strict bootstrap hash and initialization path')
 workflow=json.loads((repo/'.github/workflows/apk.yml').read_text())
 assert set(workflow['on'])=={'workflow_dispatch'}
 assert all(job['runs-on']=='ubuntu-24.04' for job in workflow['jobs'].values())

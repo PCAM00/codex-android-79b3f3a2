@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """Fork installation identity while preserving the upstream Java/JNI namespace."""
 from pathlib import Path
-import argparse,hashlib,json,re,shutil,subprocess
+import argparse,hashlib,json,re,shutil,subprocess,zipfile
 p=argparse.ArgumentParser();p.add_argument('source',type=Path);p.add_argument('--bootstrap',type=Path,required=True);p.add_argument('--bootstrap-report',type=Path,required=True);p.add_argument('--lock',type=Path,default=Path('source-lock.json'));p.add_argument('--certificate',type=Path,default=Path('signing-certificate.json'));p.add_argument('--build-number',type=int,default=1);a=p.parse_args()
 lock=json.loads(a.lock.read_text());identity=lock['identity'];package=identity['applicationId'];namespace='com.termux'
 assert package=='io.cdxbox' and package not in lock['neverModifyPackages'] and len(package)<=10
 assert subprocess.check_output(['git','-C',str(a.source),'rev-parse','HEAD'],text=True).strip()==lock['app']['commit']
 report=json.loads(a.bootstrap_report.read_text());digest=hashlib.sha256(a.bootstrap.read_bytes()).hexdigest()
 assert report['staticChecksPassed'] and report['applicationId']==package and report['sha256']==digest
+with zipfile.ZipFile(a.bootstrap) as archive:
+ stages=[i.filename for i in archive.infolist() if not i.is_dir() and i.filename.endswith('/termux-bootstrap-second-stage.sh')]
+ assert len(stages)==1,'Expected exactly one bootstrap initialization entry point'
+ second_stage=stages[0]
+ assert archive.read(second_stage).startswith(('#!'+identity['nativePrefix']+'/bin/bash').encode())
 certificate=json.loads(a.certificate.read_text());assert certificate['applicationId']==package
 fingerprint=certificate['certificateSha256'];assert re.fullmatch('[0-9a-f]{64}',fingerprint)
 assert 1<=a.build_number<1000000
@@ -69,13 +74,17 @@ for permission in ['android.permission.READ_LOGS','android.permission.DUMP','and
  text,n=re.subn(r'^\s*<uses-permission android:name="'+re.escape(permission)+r'"[^\n]*/>\n','\n',text,flags=re.M)
  if n:removed.append(permission)
 manifest.write_text(text)
+installer=a.source/'app/src/main/java/com/termux/app/TermuxInstaller.java';text=installer.read_text()
+text=one(text,'zipEntryName.equals("etc/termux/bootstrap/termux-bootstrap-second-stage.sh")',f'zipEntryName.equals("{second_stage}")')
+text=one(text,'TERMUX_PREFIX_DIR_PATH + "/etc/termux/bootstrap/termux-bootstrap-second-stage.sh"',f'TERMUX_PREFIX_DIR_PATH + "/{second_stage}"')
+installer.write_text(text)
 # Preserve package="com.termux": that is the Java/R namespace, not the final install ID.
-assert 'package="com.termux"' in text
+assert 'package="com.termux"' in manifest.read_text()
 jni=(a.source/'app/src/main/cpp/termux-bootstrap.c').read_text()
 assert 'Java_com_termux_app_TermuxInstaller_getZip' in jni
 output=a.source/'app/src/main/cpp/bootstrap-aarch64.zip'
 if output.exists() and hashlib.sha256(output.read_bytes()).hexdigest()!=digest:raise SystemExit('Unexpected bootstrap already present')
 shutil.copyfile(a.bootstrap,output)
-info={'applicationId':package,'label':'Codex','javaNamespace':namespace,'architecture':'arm64-v8a','bootstrapSha256':digest,'certificateSha256':fingerprint,'versionCode':1002000+a.build_number,'versionName':f'0.118.3-codex.{a.build_number}','removedUnusedProtectedPermissions':removed,'deviceRuntimeTested':False}
+info={'applicationId':package,'label':'Codex','javaNamespace':namespace,'architecture':'arm64-v8a','bootstrapSha256':digest,'bootstrapSecondStageRelativePath':second_stage,'certificateSha256':fingerprint,'versionCode':1002000+a.build_number,'versionName':f'0.118.3-codex.{a.build_number}','removedUnusedProtectedPermissions':removed,'deviceRuntimeTested':False}
 (a.source/'codex-patch-report.json').write_text(json.dumps(info,indent=2)+'\n')
 print(json.dumps(info,indent=2))
