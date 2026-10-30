@@ -1,6 +1,6 @@
 # Codex · Independent Android Environment
 
-Private build project for a Termux-derived Android application named **Codex**, application ID **`io.cdxbox`**.
+Public build project for a Termux-derived Android application named **Codex**, application ID **`io.cdxbox`**.
 
 This is not an official OpenAI Android app. It does not reuse or overwrite `com.termux` or `com.dsharnessmobile.shell`.
 

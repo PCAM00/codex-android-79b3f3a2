@@ -17,6 +17,14 @@ with zipfile.ZipFile(a.archive) as archive:
   if any(value in data for value in old):
    if name.startswith(('share/doc/','share/man/','share/licenses/')):warnings.append([name,'old-prefix documentation reference'])
    else:failures.append([name,'old runtime prefix'])
+  if name=='etc/codex-build.json':
+   config=json.loads(data)
+   if config.get('applicationId')!=lock['identity']['applicationId'] or config.get('nativePrefix')!=lock['identity']['nativePrefix'] or config.get('sourceApp')!=lock['app']['commit'] or config.get('sourcePackages')!=lock['packages']['commit']:
+    failures.append([name,'identity/source metadata mismatch'])
+  if data.startswith(b'#!'):
+   package=lock['identity']['applicationId']
+   if f'{package}/{package}.app.'.encode() in data or f'{package}/.app.'.encode() in data:
+    failures.append([name,'component class incorrectly resolved against installation ID'])
   if data.startswith(b'\x7fELF'):
    elf_count+=1
    if data[4]!=2 or data[5]!=1 or struct.unpack_from('<H',data,18)[0]!=183:failures.append([name,'not ELF64 little-endian aarch64'])

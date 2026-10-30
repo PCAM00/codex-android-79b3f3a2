@@ -1,0 +1,177 @@
+{
+  "name": "Build and sign independent Codex Android APK",
+  "on": {
+    "workflow_dispatch": {
+      "inputs": {
+        "native_run_id": {
+          "description": "Successful bootstrap workflow run ID from this repository",
+          "required": true,
+          "type": "string"
+        }
+      }
+    }
+  },
+  "permissions": {
+    "contents": "read",
+    "actions": "read"
+  },
+  "concurrency": {
+    "group": "codex-android-apk",
+    "cancel-in-progress": false
+  },
+  "jobs": {
+    "assemble": {
+      "runs-on": "ubuntu-24.04",
+      "timeout-minutes": 75,
+      "steps": [
+        {
+          "name": "Checkout audited build recipes",
+          "uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+          "with": {
+            "persist-credentials": false
+          }
+        },
+        {
+          "name": "Verify authorized native run",
+          "env": {
+            "GH_BUILD_TOKEN": "${{ github.token }}",
+            "NATIVE_RUN_ID": "${{ inputs.native_run_id }}"
+          },
+          "shell": "bash",
+          "run": "set -euo pipefail\npython3 - <<'PY'\nimport os,json,urllib.request\nrun=int(os.environ['NATIVE_RUN_ID'])\nreq=urllib.request.Request(f'https://api.github.com/repos/PCAM00/codex-android-79b3f3a2/actions/runs/{run}',headers={'Authorization':'Bearer '+os.environ['GH_BUILD_TOKEN'],'Accept':'application/vnd.github+json','User-Agent':'codex-apk-build'})\nwith urllib.request.urlopen(req) as r: d=json.load(r)\nassert d['repository']['id']==1439060883 and d['repository']['private'] is False\nassert d['workflow_id']==401206534 and d['event']=='workflow_dispatch' and d['conclusion']=='success'\nprint('Verified source-built native run:',run)\nPY\n"
+        },
+        {
+          "name": "Download matching native bootstrap",
+          "uses": "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+          "with": {
+            "name": "codex-native-bootstrap-aarch64",
+            "path": "native-input",
+            "run-id": "${{ inputs.native_run_id }}",
+            "github-token": "${{ github.token }}"
+          }
+        },
+        {
+          "name": "Use JDK 17 for Android SDK tools",
+          "uses": "actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3",
+          "with": {
+            "distribution": "temurin",
+            "java-version": "17"
+          }
+        },
+        {
+          "name": "Install official Android build components",
+          "shell": "bash",
+          "run": "set -euo pipefail\nsdkmanager \"platforms;android-30\" \"build-tools;30.0.3\" \"build-tools;35.0.0\" \"ndk;22.1.7171670\"\n"
+        },
+        {
+          "name": "Use JDK 11 for pinned Gradle 7.2 / AGP 4.2.2",
+          "uses": "actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3",
+          "with": {
+            "distribution": "temurin",
+            "java-version": "11"
+          }
+        },
+        {
+          "name": "Fetch pinned app and verify final bootstrap",
+          "shell": "bash",
+          "run": "set -euo pipefail\npython3 - <<'PY'\nimport json,subprocess,hashlib\nfrom pathlib import Path\ns=json.load(open('source-lock.json'))['app']\nr=json.load(open('native-input/bootstrap-report.json'))\nassert r['staticChecksPassed'] and r['applicationId']=='io.cdxbox'\nassert hashlib.sha256(Path('native-input/bootstrap-aarch64.zip').read_bytes()).hexdigest()==r['sha256']\nsubprocess.run(['git','init','app-source'],check=True)\nsubprocess.run(['git','-C','app-source','remote','add','origin',s['repository']+'.git'],check=True)\nsubprocess.run(['git','-C','app-source','fetch','--depth','1','origin',s['commit']],check=True)\nsubprocess.run(['git','-C','app-source','checkout','--detach','FETCH_HEAD'],check=True)\nassert subprocess.check_output(['git','-C','app-source','rev-parse','HEAD'],text=True).strip()==s['commit']\nPY\nmkdir -p verified-native unsigned\npython3 scripts/finalize_bootstrap.py native-input/bootstrap-aarch64.zip verified-native/bootstrap-aarch64.zip --require-source-metadata\npython3 scripts/audit_bootstrap.py verified-native/bootstrap-aarch64.zip --report verified-native/bootstrap-report.json\npython3 scripts/patch_app.py app-source --bootstrap verified-native/bootstrap-aarch64.zip --bootstrap-report verified-native/bootstrap-report.json --build-number \"$GITHUB_RUN_NUMBER\"\n"
+        },
+        {
+          "name": "Assemble release without signing secrets",
+          "shell": "bash",
+          "run": "set -euo pipefail\n(cd app-source && TERMUX_SPLIT_APKS_FOR_RELEASE_BUILDS=0 ./gradlew --no-daemon --max-workers=2 assembleRelease) 2>&1 | tee build-apk.log\npython3 - <<'PY'\nfrom pathlib import Path\nimport shutil\nfiles=list(Path('app-source/app/build/outputs/apk/release').glob('*.apk'))\nassert len(files)==1,files\nshutil.copyfile(files[0],'unsigned/Codex-unsigned.apk')\nfor name in ['bootstrap-aarch64.zip','bootstrap-report.json']:\n shutil.copyfile(Path('verified-native')/name,Path('unsigned')/name)\nshutil.copyfile('app-source/codex-patch-report.json','unsigned/codex-patch-report.json')\nPY\npython3 scripts/audit_apk.py unsigned/Codex-unsigned.apk --bootstrap unsigned/bootstrap-aarch64.zip --aapt \"$ANDROID_HOME/build-tools/35.0.0/aapt\" --report unsigned/unsigned-audit.json\n"
+        },
+        {
+          "name": "Archive matching app sources and build recipes",
+          "shell": "bash",
+          "run": "set -euo pipefail\nmkdir -p corresponding-source\npython3 - <<'PY'\nfrom pathlib import Path\nimport tarfile\nwith tarfile.open('corresponding-source/Codex-app-source.tar.gz','w:gz') as archive:\n for root in [Path('app-source'),Path('scripts')]:\n  for p in root.rglob('*'):\n   if not p.is_file() or p.is_symlink():continue\n   if any(x in {'.git','.gradle','build','__pycache__'} for x in p.parts):continue\n   if p.suffix in {'.jks','.p12','.pem','.pyc'} or p.name.startswith('bootstrap-') and p.suffix=='.zip':continue\n   archive.add(p,arcname=str(p),recursive=False)\n for name in ['source-lock.json','action-lock.json','UPSTREAM.md','README.md']:\n  archive.add(name,arcname=name,recursive=False)\nPY\n"
+        },
+        {
+          "name": "Upload audited unsigned assembly",
+          "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+          "with": {
+            "name": "codex-unsigned-arm64",
+            "path": "unsigned/",
+            "if-no-files-found": "error",
+            "retention-days": 7
+          }
+        },
+        {
+          "name": "Upload corresponding app source",
+          "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+          "with": {
+            "name": "codex-corresponding-app-source",
+            "path": "corresponding-source/",
+            "if-no-files-found": "error",
+            "retention-days": 14
+          }
+        },
+        {
+          "name": "Upload assembly diagnostics",
+          "if": "always()",
+          "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+          "with": {
+            "name": "codex-apk-assembly-log",
+            "path": "build-apk.log\napp-source/codex-patch-report.json\nverified-native/bootstrap-report.json",
+            "if-no-files-found": "warn",
+            "retention-days": 7
+          }
+        }
+      ]
+    },
+    "sign": {
+      "needs": "assemble",
+      "runs-on": "ubuntu-24.04",
+      "timeout-minutes": 20,
+      "steps": [
+        {
+          "name": "Checkout audited build recipes",
+          "uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+          "with": {
+            "persist-credentials": false
+          }
+        },
+        {
+          "name": "Use JDK 17 for Android SDK tools",
+          "uses": "actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3",
+          "with": {
+            "distribution": "temurin",
+            "java-version": "17"
+          }
+        },
+        {
+          "name": "Install official APK verification/signing tools",
+          "shell": "bash",
+          "run": "sdkmanager \"build-tools;35.0.0\""
+        },
+        {
+          "name": "Download same-run audited unsigned APK",
+          "uses": "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+          "with": {
+            "name": "codex-unsigned-arm64",
+            "path": "unsigned"
+          }
+        },
+        {
+          "name": "Sign using dedicated encrypted repository secrets",
+          "env": {
+            "CODEX_KEYSTORE": "${{ secrets.CODEX_KEYSTORE }}",
+            "CODEX_STORE_PASSWORD": "${{ secrets.CODEX_STORE_PASSWORD }}"
+          },
+          "shell": "bash",
+          "run": "set -euo pipefail\npython3 scripts/sign_apk.py --aapt \"$ANDROID_HOME/build-tools/35.0.0/aapt\" --apksigner \"$ANDROID_HOME/build-tools/35.0.0/apksigner\"\n"
+        },
+        {
+          "name": "Upload signed APK and verification reports",
+          "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+          "with": {
+            "name": "Codex-Android-arm64",
+            "path": "dist/",
+            "if-no-files-found": "error",
+            "retention-days": 14
+          }
+        }
+      ]
+    }
+  }
+}

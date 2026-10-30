@@ -1,0 +1,6 @@
+{
+  "applicationId": "io.cdxbox",
+  "certificateSha256": "14cd1fad787e7b771fdeab9d8cd7096729e705786e1cad3dc6c9086629df7703",
+  "keyAlgorithm": "RSA-3072",
+  "privateKeyInRepository": false
+}
