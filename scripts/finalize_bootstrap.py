@@ -35,5 +35,33 @@ with zipfile.ZipFile(a.input) as original:
    'etc/codex-build.json':json.dumps(config,indent=2)+'\n'
   }.items():
    info=zipfile.ZipInfo(name);info.external_attr=0o100600<<16;info.compress_type=zipfile.ZIP_DEFLATED;final.writestr(info,data)
+# Bundle the local web UI (Node + static page) so the app needs no package downloads.
+ui_dir = Path(__file__).resolve().parent.parent / 'ui'
+if ui_dir.is_dir():
+    with zipfile.ZipFile(a.output) as present_zip:
+        present = set(present_zip.namelist())
+    with zipfile.ZipFile(a.output, 'a', zipfile.ZIP_DEFLATED) as extra:
+        for source in sorted(ui_dir.rglob('*')):
+            if not source.is_file():
+                continue
+            rel = 'opt/codex-ui/' + source.relative_to(ui_dir).as_posix()
+            if rel in present:
+                continue
+            info = zipfile.ZipInfo(rel)
+            info.external_attr = 0o100700 << 16
+            info.compress_type = zipfile.ZIP_DEFLATED
+            extra.writestr(info, source.read_bytes())
+        launcher = (
+            '#!/data/data/io.cdxbox/files/usr/bin/bash\n'
+            '# Start the bundled Codex web UI on localhost only.\n'
+            'export CODEX_UI_MODEL="${CODEX_UI_MODEL:-gpt-6.1-sol}"\n'
+            'export CODEX_UI_PORT="${CODEX_UI_PORT:-8099}"\n'
+            'exec "$PREFIX/bin/node" "$PREFIX/opt/codex-ui/server.mjs" "$@"\n'
+        )
+        if 'bin/codex-ui' not in present:
+            info = zipfile.ZipInfo('bin/codex-ui')
+            info.external_attr = 0o100700 << 16
+            info.compress_type = zipfile.ZIP_DEFLATED
+            extra.writestr(info, launcher)
 with zipfile.ZipFile(a.output) as final:validate_zip_links(final,strict_names=True)
 print('Bootstrap configuration/component references finalized; ELF binaries unchanged:',a.output)
