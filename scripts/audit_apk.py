@@ -46,6 +46,12 @@ with zipfile.ZipFile(a.apk) as apk:
    if name.endswith('/libtermux-bootstrap.so'):bootstrap_match=bootstrap in data
   if name.startswith('res/xml') and name.endswith('/shortcuts.xml'):shortcut_names.append(name)
   if name.endswith(('.jks','.p12')):failures.append('Unexpected signing-key container inside APK')
+if not shortcut_names:
+ listing=subprocess.check_output([a.aapt,'list',str(a.apk)],text=True)
+ entries=[line.strip() for line in listing.splitlines() if line.strip()]
+ shortcut_names=[e for e in entries if e.endswith('shortcuts.xml')]
+ if not shortcut_names:
+  failures.append('No compiled shortcuts XML entry; xml resources present: '+','.join([e for e in entries if e.endswith('.xml') and ('/xml' in e or 'xml/' in e)][:10]))
 if abis!={'arm64-v8a'}:failures.append('APK includes missing/unexpected native ABI: '+str(sorted(abis)))
 if not bootstrap_match:failures.append('JNI bootstrap payload is not byte-identical to the audited ZIP')
 missing=sorted(required_classes-classes)
