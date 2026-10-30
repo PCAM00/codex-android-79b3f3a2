@@ -61,7 +61,7 @@
         {
           "name": "Install official Android build components",
           "shell": "bash",
-          "run": "set -euo pipefail\nsdkmanager \"platforms;android-30\" \"build-tools;30.0.3\" \"build-tools;35.0.0\" \"ndk;22.1.7171670\"\n"
+          "run": "set -euo pipefail\nSDK=\"${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}\"\nif [ ! -d \"$SDK\" ]; then\n  for candidate in /usr/local/lib/android/sdk \"$HOME/Android/Sdk\"; do\n    if [ -d \"$candidate\" ]; then SDK=\"$candidate\"; break; fi\n  done\nfi\necho \"ANDROID_HOME=$SDK\" >> \"$GITHUB_ENV\"\necho \"ANDROID_SDK_ROOT=$SDK\" >> \"$GITHUB_ENV\"\nSDKMAN=\"$(command -v sdkmanager || true)\"\nif [ -z \"$SDKMAN\" ]; then\n  for candidate in \"$SDK\"/cmdline-tools/*/bin/sdkmanager \"$SDK\"/tools/bin/sdkmanager; do\n    if [ -x \"$candidate\" ]; then SDKMAN=\"$candidate\"; break; fi\n  done\nfi\nif [ -n \"${SDKMAN}\" ]; then\n  yes | \"$SDKMAN\" --sdk_root=\"$SDK\" \"platforms;android-30\" \"build-tools;30.0.3\" \"build-tools;35.0.0\" \"ndk;22.1.7171670\" > /dev/null || true\nelse\n  echo \"sdkmanager not on this image; relying on preinstalled SDK components\"\nfi\ntest -f \"$SDK/platforms/android-30/android.jar\"\ntest -x \"$SDK/build-tools/30.0.3/aapt\"\ntest -x \"$SDK/build-tools/35.0.0/aapt\"\ntest -x \"$SDK/build-tools/35.0.0/apksigner\"\necho \"Android SDK components verified at $SDK\"\n"
         },
         {
           "name": "Use JDK 11 for pinned Gradle 7.2 / AGP 4.2.2",
@@ -79,7 +79,7 @@
         {
           "name": "Assemble release without signing secrets",
           "shell": "bash",
-          "run": "set -euo pipefail\n(cd app-source && TERMUX_SPLIT_APKS_FOR_RELEASE_BUILDS=0 ./gradlew --no-daemon --max-workers=2 assembleRelease) 2>&1 | tee build-apk.log\npython3 - <<'PY'\nfrom pathlib import Path\nimport shutil\nfiles=list(Path('app-source/app/build/outputs/apk/release').glob('*.apk'))\nassert len(files)==1,files\nshutil.copyfile(files[0],'unsigned/Codex-unsigned.apk')\nfor name in ['bootstrap-aarch64.zip','bootstrap-report.json']:\n shutil.copyfile(Path('verified-native')/name,Path('unsigned')/name)\nshutil.copyfile('app-source/codex-patch-report.json','unsigned/codex-patch-report.json')\nPY\npython3 scripts/audit_apk.py unsigned/Codex-unsigned.apk --bootstrap unsigned/bootstrap-aarch64.zip --aapt \"$ANDROID_HOME/build-tools/35.0.0/aapt\" --report unsigned/unsigned-audit.json\n"
+          "run": "set -euo pipefail\n(cd app-source && TERMUX_SPLIT_APKS_FOR_RELEASE_BUILDS=0 ./gradlew --no-daemon --max-workers=2 assembleRelease) 2>&1 | tee build-apk.log\npython3 - <<'PY'\nfrom pathlib import Path\nimport shutil\nfiles=list(Path('app-source/app/build/outputs/apk/release').glob('*.apk'))\nassert len(files)==1,files\nshutil.copyfile(files[0],'unsigned/Codex-unsigned.apk')\nfor name in ['bootstrap-aarch64.zip','bootstrap-report.json']:\n shutil.copyfile(Path('verified-native')/name,Path('unsigned')/name)\nshutil.copyfile('app-source/codex-patch-report.json','unsigned/codex-patch-report.json')\nPY\npython3 scripts/audit_apk.py unsigned/Codex-unsigned.apk --bootstrap unsigned/bootstrap-aarch64.zip --aapt \"${ANDROID_HOME:?}/build-tools/35.0.0/aapt\" --report unsigned/unsigned-audit.json\n"
         },
         {
           "name": "Archive matching app sources and build recipes",
@@ -142,7 +142,7 @@
         {
           "name": "Install official APK verification/signing tools",
           "shell": "bash",
-          "run": "sdkmanager \"build-tools;35.0.0\""
+          "run": "set -euo pipefail\nSDK=\"${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}\"\nif [ ! -d \"$SDK\" ]; then\n  for candidate in /usr/local/lib/android/sdk \"$HOME/Android/Sdk\"; do\n    if [ -d \"$candidate\" ]; then SDK=\"$candidate\"; break; fi\n  done\nfi\necho \"ANDROID_HOME=$SDK\" >> \"$GITHUB_ENV\"\necho \"ANDROID_SDK_ROOT=$SDK\" >> \"$GITHUB_ENV\"\nSDKMAN=\"$(command -v sdkmanager || true)\"\nif [ -z \"$SDKMAN\" ]; then\n  for candidate in \"$SDK\"/cmdline-tools/*/bin/sdkmanager \"$SDK\"/tools/bin/sdkmanager; do\n    if [ -x \"$candidate\" ]; then SDKMAN=\"$candidate\"; break; fi\n  done\nfi\nif [ -n \"${SDKMAN}\" ]; then\n  yes | \"$SDKMAN\" --sdk_root=\"$SDK\" \"build-tools;35.0.0\" > /dev/null || true\nelse\n  echo \"sdkmanager not on this image; relying on preinstalled SDK components\"\nfi\ntest -x \"$SDK/build-tools/35.0.0/aapt\"\ntest -x \"$SDK/build-tools/35.0.0/apksigner\"\necho \"Android SDK components verified at $SDK\"\n"
         },
         {
           "name": "Download same-run audited unsigned APK",
@@ -159,7 +159,7 @@
             "CODEX_STORE_PASSWORD": "${{ secrets.CODEX_STORE_PASSWORD }}"
           },
           "shell": "bash",
-          "run": "set -euo pipefail\npython3 scripts/sign_apk.py --aapt \"$ANDROID_HOME/build-tools/35.0.0/aapt\" --apksigner \"$ANDROID_HOME/build-tools/35.0.0/apksigner\"\n"
+          "run": "set -euo pipefail\npython3 scripts/sign_apk.py --aapt \"${ANDROID_HOME:?}/build-tools/35.0.0/aapt\" --apksigner \"${ANDROID_HOME:?}/build-tools/35.0.0/apksigner\"\n"
         },
         {
           "name": "Upload signed APK and verification reports",
