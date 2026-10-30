@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "policy": "Exact paths, whole-file SHA256 and all old-prefix-bearing lines only; no automatic comment or directory exemptions.",
+  "files": [
+    {
+      "path": "bin/termux-exec-ld-preload-lib",
+      "sha256": "dc411112ca86915cbfc31c04503578f348b6bbbc6effce47577ee9c8b4102047",
+      "sourceDeb": {
+        "file": "termux-exec_1:2.5.0-1_aarch64.deb",
+        "sha256": "4a904f518d14d25035241294f0503af1d761ff3de3a3fbc3230fc915bbddee44",
+        "member": "./data/data/io.cdxbox/files/usr/bin/termux-exec-ld-preload-lib"
+      },
+      "review": "Full 202-line, 6144-byte built file read via dpkg-deb --fsys-tarfile, never installed. Line 103 is a standalone shell comment inside termux_exec__ld_preload_lib__setup__run_command (81-108), between rm -f at 101 and unset LD_PRELOAD at 104. It is outside quotes and the separate help heredoc (177-196). The shebang at 1 and fallback TERMUX__PREFIX at 18 use /data/data/io.cdxbox/files/usr. Exactly one old-prefix occurrence.",
+      "hits": [
+        {
+          "line": 103,
+          "content": "    # Prevent `CANNOT LINK EXECUTABLE \"cp\": library \"/data/data/com.termux/files/usr/lib/libtermux-exec-ld-preload.so\" not found: needed by main executable`"
+        }
+      ]
+    },
+    {
+      "path": "include/termux-exec/termux/termux_exec__nos__c/v1/termux/api/termux_exec/service/ld_preload/direct/exec/ExecIntercept.h",
+      "sha256": "1d22ff61481babbd865eb74270966b3d040637f799d5bdb8a170c11bc0dd81bf",
+      "sourceDeb": {
+        "file": "termux-exec_1:2.5.0-1_aarch64.deb",
+        "sha256": "4a904f518d14d25035241294f0503af1d761ff3de3a3fbc3230fc915bbddee44",
+        "member": "./data/data/io.cdxbox/files/usr/include/termux-exec/termux/termux_exec__nos__c/v1/termux/api/termux_exec/service/ld_preload/direct/exec/ExecIntercept.h"
+      },
+      "review": "Full 398-line, 16158-byte built file read via dpkg-deb --fsys-tarfile, never installed. Lines 88, 93, 97 and 103 are command/log examples inside the uninterrupted C block comment opened at 16 and closed at 117, documenting pre-Android-6 linker path-length limits. No hit is in a macro, declaration, string literal or executable code. Exactly four old-prefix occurrences.",
+      "hits": [
+        {
+          "line": 88,
+          "content": " * LD_DEBUG=3 /data/data/com.termux/files/usr/libexec/installed-tests/termux-exec/lib/termux-exec_nos_c/tre/scripts/termux/api/termux_exec/service/ld_preload/direct/exec/files/print-args-binary arg1; echo $?"
+        },
+        {
+          "line": 93,
+          "content": " * linker D  DEBUG: library name \"/data/data/com.termux/files/usr/libexec/installed-tests/termux-exec/lib/termux-exec_nos_c/tre/scripts/termux/api/termux_exec/service/ld_preload/direct/exec/files/print-args-binary\" too long"
+        },
+        {
+          "line": 97,
+          "content": " * (exec -a print-args-binary /data/data/com.termux/files/usr/libexec/installed-tests/termux-exec/lib/termux-exec_nos_c/tre/scripts/termux/api/termux_exec/service/ld_preload/direct/exec/files/print-args-binary arg1); echo $?"
+        },
+        {
+          "line": 103,
+          "content": " * (cd /data/data/com.termux/files/usr/libexec/installed-tests/termux-exec/lib/termux-exec_nos_c/tre/scripts/termux/api/termux_exec/service/ld_preload/direct/exec/files && ./print-args-binary arg1); echo $?"
+        }
+      ]
+    }
+  ]
+}

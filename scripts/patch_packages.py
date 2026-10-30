@@ -5,6 +5,28 @@ import argparse, json
 p=argparse.ArgumentParser();p.add_argument('source',type=Path);p.add_argument('--lock',type=Path,default=Path('source-lock.json'));a=p.parse_args()
 lock=json.loads(a.lock.read_text());package=lock['identity']['applicationId']
 assert package=='io.cdxbox' and package not in lock['neverModifyPackages']
+# termux-tools 1.45 configure.ac reads the environment, not unexported shell aliases.
+# Validate the pinned hook before changing any source files.
+tools=a.source/'packages/termux-tools/build.sh';tools_text=tools.read_text()
+tools_old='''termux_step_pre_configure() {
+\tautoreconf -vfi
+}
+'''
+tools_new='''termux_step_pre_configure() {
+\t# Pass the retargeted build properties to termux-tools configure.ac.
+\texport TERMUX_APP_PACKAGE="${TERMUX_APP__PACKAGE_NAME:?}"
+\texport TERMUX_BASE_DIR="${TERMUX__ROOTFS:?}"
+\texport TERMUX_CACHE_DIR="${TERMUX__CACHE_DIR:?}"
+\texport TERMUX_PREFIX="${TERMUX__PREFIX:?}"
+\texport TERMUX_ANDROID_HOME="${TERMUX__HOME:-${TERMUX__ROOTFS}/home}"
+\texport TERMUX_PACKAGE_FORMAT="${TERMUX_PACKAGE_FORMAT:-debian}"
+\texport TERMUX_PACKAGE_MANAGER="${TERMUX_PACKAGE_MANAGER:-apt}"
+\tautoreconf -vfi
+}
+'''
+if tools_text.count(tools_old)!=1 or tools_text.count('termux_step_pre_configure()')!=1:
+ raise ValueError('Pinned termux-tools pre-configure hook changed; refusing to patch')
+tools_text=tools_text.replace(tools_old,tools_new)
 props=a.source/'scripts/properties.sh'
 text=props.read_text()
 old='TERMUX_APP__PACKAGE_NAME="com.termux"'
@@ -55,6 +77,7 @@ new='''\t\t# This marker is written only after every requested source recipe com
 assert text.count(old)==1
 text=text.replace(old,new)
 bootstrap.write_text(text)
+tools.write_text(tools_text)
 import shutil
 for original,target in [('bootstrap_recipes.py','codex_bootstrap_recipes.py'),('select_runtime_debs.py','codex_select_runtime_debs.py')]:
  shutil.copyfile(Path(__file__).resolve().parent/original,a.source/'scripts'/target)
